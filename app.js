@@ -28,7 +28,7 @@ const WORKPLACES = [
 ];
 
 // Client ID and API Key from your Google Developer Console
-const CLIENT_ID = 'http://1030264403343-bc3g0kfsub6b8j91snvnr542p766j75u.apps.googleusercontent.com';  // Replace with your Client ID
+const CLIENT_ID = '1030264403343-bc3g0kfsub6b8j91snvnr542p766j75u.apps.googleusercontent.com';  // Replace with your Client ID
 const API_KEY = 'AIzaSyCIP3fKpsSJCByo6uETx6CPwxhEemKyDzM';  // Replace with your API Key
 
 // Scopes required for Google Drive access
