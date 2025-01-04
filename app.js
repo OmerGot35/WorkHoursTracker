@@ -28,8 +28,8 @@ const WORKPLACES = [
 ];
 
 // Client ID and API Key from your Google Developer Console
-const CLIENT_ID = '1030264403343-bc3g0kfsub6b8j91snvnr542p766j75u.apps.googleusercontent.com';  // Replace with your Client ID
-const API_KEY = 'AIzaSyCIP3fKpsSJCByo6uETx6CPwxhEemKyDzM';  // Replace with your API Key
+const CLIENT_ID = '1030264403343-bc3g0kfsub6b8j91snvnr542p766j75u.apps.googleusercontent.com';
+const API_KEY = 'AIzaSyCIP3fKpsSJCByo6uETx6CPwxhEemKyDzM';
 
 // Scopes required for Google Drive access
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
@@ -48,90 +48,169 @@ const WorkHoursTracker = () => {
   });
   const [error, setError] = React.useState("");
   const [selectedMonth, setSelectedMonth] = React.useState(new Date());
-
-  // Load entries from Google Drive if user is authenticated
-  React.useEffect(() => {
-    if (gapiLoaded) {
-      loadEntriesFromDrive();
-    }
-  }, [gapiLoaded]);
-
-  // Handle sign-in/out and initialize Google API client
-  const handleSignIn = () => {
-    if (auth2.isSignedIn.get()) {
-      const user = auth2.currentUser.get();
-      console.log('User signed in: ', user.getBasicProfile().getName());
-      loadEntriesFromDrive();
-    } else {
-      auth2.signIn().then(() => {
-        const user = auth2.currentUser.get();
-        console.log('User signed in: ', user.getBasicProfile().getName());
-        loadEntriesFromDrive();
-      });
-    }
-  };
-
-  const handleSignOut = () => {
-    auth2.signOut().then(() => {
-      console.log('User signed out');
-      setEntries([]);
-    });
-  };
+  const [isLoading, setIsLoading] = React.useState(false);
+  const [isSignedIn, setIsSignedIn] = React.useState(false);
 
   // Initialize Google API client
-  const initGoogleAPI = () => {
-    gapi.load('client:auth2', () => {
+  React.useEffect(() => {
+    const initClient = () => {
+      console.log('Initializing Google API client...');
       gapi.client.init({
         apiKey: API_KEY,
         clientId: CLIENT_ID,
         scope: SCOPES,
         discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"]
       }).then(() => {
+        console.log('Google API client initialized');
         auth2 = gapi.auth2.getAuthInstance();
-        auth2.isSignedIn.listen(handleSignIn);
+        setIsSignedIn(auth2.isSignedIn.get());
+        auth2.isSignedIn.listen(updateSignInStatus);
+        updateSignInStatus(auth2.isSignedIn.get());
         gapiLoaded = true;
-        if (auth2.isSignedIn.get()) {
-          loadEntriesFromDrive();
-        }
+      }).catch(error => {
+        console.error('Error initializing Google API client:', error);
+        setError('Failed to initialize Google API client');
       });
+    };
+
+    gapi.load('client:auth2', initClient);
+  }, []);
+
+  const updateSignInStatus = (isSignedIn) => {
+    console.log('Sign in status updated:', isSignedIn);
+    setIsSignedIn(isSignedIn);
+    if (isSignedIn) {
+      loadEntriesFromDrive();
+    }
+  };
+
+  // Handle sign-in
+  const handleSignIn = () => {
+    console.log('Attempting to sign in...');
+    if (!auth2) {
+      console.error('Auth2 not initialized');
+      setError('Authentication not initialized. Please refresh the page.');
+      return;
+    }
+
+    setIsLoading(true);
+    auth2.signIn().then(() => {
+      console.log('Successfully signed in');
+      const profile = auth2.currentUser.get().getBasicProfile();
+      console.log('Signed in as:', profile.getName());
+      loadEntriesFromDrive();
+    }).catch(error => {
+      console.error('Sign in error:', error);
+      setError('Failed to sign in. Please try again.');
+    }).finally(() => {
+      setIsLoading(false);
     });
+  };
+
+  // Handle sign-out
+  const handleSignOut = () => {
+    if (!auth2) {
+      console.error('Auth2 not initialized');
+      return;
+    }
+
+    auth2.signOut().then(() => {
+      console.log('Successfully signed out');
+      setEntries([]);
+      setIsSignedIn(false);
+    }).catch(error => {
+      console.error('Sign out error:', error);
+      setError('Failed to sign out');
+    });
+  };
+
+  // Create or get the work hours file
+  const getOrCreateWorkHoursFile = async () => {
+    try {
+      // First, try to find an existing file
+      const response = await gapi.client.drive.files.list({
+        q: "name='work_hours.json'",
+        spaces: 'drive',
+        fields: 'files(id, name)'
+      });
+
+      const files = response.result.files;
+      if (files && files.length > 0) {
+        console.log('Found existing file:', files[0].id);
+        return files[0].id;
+      }
+
+      // If no file exists, create a new one
+      const fileMetadata = {
+        name: 'work_hours.json',
+        mimeType: 'application/json'
+      };
+
+      const createResponse = await gapi.client.drive.files.create({
+        resource: fileMetadata,
+        fields: 'id'
+      });
+
+      console.log('Created new file:', createResponse.result.id);
+      return createResponse.result.id;
+    } catch (error) {
+      console.error('Error in getOrCreateWorkHoursFile:', error);
+      throw error;
+    }
   };
 
   // Load work hours entries from Google Drive
-  const loadEntriesFromDrive = () => {
-    const fileId = 'YOUR_FILE_ID';  // Replace with the file ID from Google Drive
+  const loadEntriesFromDrive = async () => {
+    console.log('Loading entries from Drive...');
+    setIsLoading(true);
+    setError("");
 
-    gapi.client.drive.files.get({
-      fileId: fileId,
-      alt: 'media'
-    }).then(response => {
+    try {
+      const fileId = await getOrCreateWorkHoursFile();
+      
+      const response = await gapi.client.drive.files.get({
+        fileId: fileId,
+        alt: 'media'
+      });
+
+      console.log('Loaded data:', response);
       const data = JSON.parse(response.body);
       setEntries(data.entries || []);
-    }).catch(error => {
-      console.log('Error loading entries from Google Drive: ', error);
-    });
+    } catch (error) {
+      console.error('Error loading entries:', error);
+      setError('Failed to load entries. Please try again.');
+      // If file doesn't exist or is empty, initialize with empty array
+      setEntries([]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   // Save work hours entries to Google Drive
-  const saveEntriesToDrive = () => {
-    const fileId = 'YOUR_FILE_ID';  // Replace with the file ID from Google Drive
+  const saveEntriesToDrive = async (updatedEntries) => {
+    console.log('Saving entries to Drive...');
+    setIsLoading(true);
+    setError("");
 
-    const data = { entries: entries };
-    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
-    
-    const formData = new FormData();
-    formData.append('file', blob, 'work_hours.json');
+    try {
+      const fileId = await getOrCreateWorkHoursFile();
+      const data = { entries: updatedEntries };
+      
+      await gapi.client.drive.files.update({
+        fileId: fileId,
+        media: {
+          mimeType: 'application/json',
+          body: JSON.stringify(data)
+        }
+      });
 
-    gapi.client.drive.files.update({
-      fileId: fileId,
-      media: {
-        body: blob
-      }
-    }).then(() => {
-      console.log('Entries saved to Google Drive.');
-    }).catch(error => {
-      console.log('Error saving entries to Google Drive: ', error);
-    });
+      console.log('Entries saved successfully');
+    } catch (error) {
+      console.error('Error saving entries:', error);
+      setError('Failed to save entries. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleInputChange = (e) => {
@@ -154,7 +233,7 @@ const WorkHoursTracker = () => {
     }));
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     
     const selectedDate = new Date(formData.date);
@@ -172,11 +251,9 @@ const WorkHoursTracker = () => {
       isSaturday
     };
     
-    setEntries(prev => {
-      const newEntries = [...prev, newEntry];
-      saveEntriesToDrive();  // Save the updated list to Google Drive
-      return newEntries;
-    });
+    const updatedEntries = [...entries, newEntry];
+    setEntries(updatedEntries);
+    await saveEntriesToDrive(updatedEntries);
     setError("");
   };
 
@@ -207,23 +284,104 @@ const WorkHoursTracker = () => {
     </div>
   );
 
-  // Other functions to render form, dashboard, and raw entries...
-  
+  const renderEntryForm = () => (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div>
+        <label className="block mb-1">Workplace:</label>
+        <select
+          name="workplace"
+          value={formData.workplace}
+          onChange={handleInputChange}
+          className="w-full p-2 border rounded"
+        >
+          {WORKPLACES.map(workplace => (
+            <option key={workplace.name} value={workplace.name}>
+              {workplace.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <label className="block mb-1">Date:</label>
+        <input
+          type="date"
+          name="date"
+          value={formData.date}
+          onChange={handleInputChange}
+          className="w-full p-2 border rounded"
+        />
+      </div>
+      <div>
+        <label className="block mb-1">Hours:</label>
+        <input
+          type="number"
+          name="hours"
+          value={formData.hours}
+          onChange={handleInputChange}
+          min="1"
+          max="24"
+          className="w-full p-2 border rounded"
+        />
+      </div>
+      {error && <div className="text-red-500">{error}</div>}
+      <button
+        type="submit"
+        className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600"
+        disabled={isLoading}
+      >
+        {isLoading ? 'Saving...' : 'Submit'}
+      </button>
+    </form>
+  );
+
   return (
     <div className="min-h-screen bg-gray-100">
       {renderNavigation()}
       <div className="max-w-4xl mx-auto p-6">
-        <button onClick={handleSignIn} className="btn-signin">
-          Sign In to Google
-        </button>
-        <button onClick={handleSignOut} className="btn-signout">
-          Sign Out
-        </button>
-
-        {/* Render the appropriate view (entry form, dashboard, or raw data) */}
+        {!isSignedIn ? (
+          <button
+            onClick={handleSignIn}
+            className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600"
+            disabled={isLoading}
+          >
+            {isLoading ? 'Signing in...' : 'Sign In with Google'}
+          </button>
+        ) : (
+          <div className="space-y-6">
+            <div className="flex justify-end">
+              <button
+                onClick={handleSignOut}
+                className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600"
+              >
+                Sign Out
+              </button>
+            </div>
+            {currentView === VIEWS.ENTRY && renderEntryForm()}
+            {currentView === VIEWS.DASHBOARD && <div>Dashboard View (Coming Soon)</div>}
+            {currentView === VIEWS.RAW && (
+              <pre className="bg-white p-4 rounded shadow overflow-auto">
+                {JSON.stringify(entries, null, 2)}
+              </pre>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
 };
 
-window.onload = initGoogleAPI;
+// Initialize the app
+const initApp = () => {
+  const rootElement = document.getElementById('root');
+  if (rootElement) {
+    ReactDOM.render(<WorkHoursTracker />, rootElement);
+  }
+};
+
+// Load the Google API client
+window.onload = () => {
+  console.log('Window loaded, initializing Google API...');
+  gapi.load('client:auth2', () => {
+    console.log('Google API loaded');
+  });
+};
